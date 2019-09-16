@@ -1,6 +1,7 @@
 package file
 
 import (
+	"encoding/base64"
 	"encoding/gob"
 	"fmt"
 	"io"
@@ -8,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"regexp"
 
 	"github.com/mjibson/moggio/codec"
 	"github.com/mjibson/moggio/protocol"
@@ -72,9 +74,43 @@ func (f *File) List() (protocol.SongList, error) {
 	return f.Songs, nil
 }
 
+/*
+IsCover checks if the filename contained in "path" is a legal name for a cover image.
+*/
+func IsCover(path string) bool {
+	match, _ := regexp.MatchString("(?i)(cover|folder)\\.(jpg|jpeg|png)$", path)
+	return match
+}
+
 func (f *File) Refresh() (protocol.SongList, error) {
+	covers := make(map[string]string)
 	songs := make(protocol.SongList)
+
+	// first pass: get covers
 	err := filepath.Walk(f.Path, func(path string, info os.FileInfo, err error) error {
+		if err != nil {
+			return err
+		}
+		if info.IsDir() {
+			return nil
+		}
+		if !IsCover(path) {
+			return nil
+		}
+
+		/*data, err := ioutil.ReadFile(path)
+		if err != nil {
+			return nil
+		}*/
+		// this is actually a workaround - we could theoretically use "file://" URLs, but browsers deny access to local files by default nowadays :(
+		//covers[filepath.Dir(path)] = fmt.Sprintf("data:%s;base64,%s", "img/jpeg", base64.StdEncoding.EncodeToString(data))
+		covers[filepath.Dir(path)] = fmt.Sprintf("/cover/" + base64.StdEncoding.EncodeToString([]byte(path)))
+
+		return nil
+	})
+
+	// second pass: scan music files, add covers and other info
+	err = filepath.Walk(f.Path, func(path string, info os.FileInfo, err error) error {
 		if err != nil {
 			return err
 		}
@@ -101,6 +137,10 @@ func (f *File) Refresh() (protocol.SongList, error) {
 			}
 			if info.Album == "" {
 				info.Album = filepath.Base(filepath.Dir(path))
+			}
+			cover, exists := covers[filepath.Dir(path)]
+			if exists {
+				info.ImageURL = cover
 			}
 			songs[codec.NewID(path, string(i))] = &info
 		}

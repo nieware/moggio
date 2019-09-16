@@ -2,6 +2,7 @@ package server
 
 import (
 	"bytes"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"html/template"
@@ -11,10 +12,12 @@ import (
 	"net/http"
 	"net/url"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/julienschmidt/httprouter"
 	"github.com/mjibson/moggio/protocol"
+	"github.com/mjibson/moggio/protocol/file"
 	"golang.org/x/net/websocket"
 )
 
@@ -64,6 +67,7 @@ func (srv *Server) GetMux(devMode bool) *http.ServeMux {
 	mux := http.NewServeMux()
 	mux.Handle("/static/", http.FileServer(webFS))
 	mux.HandleFunc("/", Index)
+	mux.HandleFunc("/cover/", Cover)
 	mux.Handle("/api/", router)
 	mux.Handle("/ws/", websocket.Handler(srv.WebSocket))
 	return mux
@@ -77,8 +81,36 @@ func (srv *Server) ListenAndServe(addr string, devMode bool) error {
 	return http.ListenAndServe(addr, mux)
 }
 
+/*
+Index returns the moggio index page
+*/
 func Index(w http.ResponseWriter, r *http.Request) {
 	w.Write(indexHTML)
+}
+
+/*
+Cover is used to fetch covers available as files in the local filesystem (to avoid issues with browsers not being
+able to access local files when using "file" URLs). The file content is only returned if the filename is "legal"
+for a cover image file according to the "file" protocol (protection against arbitrary file access).
+*/
+func Cover(w http.ResponseWriter, r *http.Request) {
+	//log.Printf("%#v", r)
+	parts := strings.Split(r.RequestURI, "/")
+	if len(parts) < 2 {
+		w.Write([]byte{})
+		return
+	}
+	path, err := base64.StdEncoding.DecodeString(parts[2])
+	if err != nil || !file.IsCover(string(path)) {
+		w.Write([]byte{})
+		return
+	}
+	content, err := ioutil.ReadFile(string(path))
+	if err != nil {
+		w.Write([]byte{})
+		return
+	}
+	w.Write(content)
 }
 
 func serveError(w http.ResponseWriter, err error) {
